@@ -24,6 +24,8 @@
 	};
 
 	const joinGameUrl = "https://www.roblox.com/games/start?placeId=123076957357158";
+	const initialVisibleItemCount = 24;
+	const visibleItemIncrement = 48;
 	const rarityOrder = ["common", "uncommon", "rare", "epic", "legendary", "secret"];
 	const categoryOrder: Record<CategoryKey, number> = {
 		droppers: 0,
@@ -37,6 +39,8 @@
 	let query = $state("");
 	let sortKey = $state<SortKey>("name-asc");
 	let sortMenuOpen = $state(false);
+	let visibleItemCount = $state(initialVisibleItemCount);
+	let previousListKey = $state("");
 
 	const baseSortOptions: SortOption[] = [
 		{ key: "name-asc", label: "Name: A to Z" },
@@ -156,6 +160,18 @@
 	const currentSection = $derived(
 		visibleSections.find((section) => section.key === activeSection) ?? visibleSections[0]
 	);
+	const listKey = $derived(`${activeSection}:${sortKey}:${query.trim().toLowerCase()}`);
+	const visibleItems = $derived(currentSection?.items.slice(0, visibleItemCount) ?? []);
+	const hasMoreItems = $derived((currentSection?.items.length ?? 0) > visibleItemCount);
+
+	$effect(() => {
+		if (previousListKey === listKey) {
+			return;
+		}
+
+		previousListKey = listKey;
+		visibleItemCount = initialVisibleItemCount;
+	});
 </script>
 
 <svelte:head>
@@ -166,7 +182,7 @@
 	/>
 </svelte:head>
 
-<main class="catalog-shell">
+<main class="catalog-shell" data-sveltekit-preload-data="hover">
 	<header class="topbar">
 		<a class="brand" href="/">Tycoon Sim Wiki</a>
 		<div class="topbar-actions">
@@ -282,10 +298,22 @@
 
 		{#if currentSection.items.length > 0}
 			<section class="grid" aria-label="{currentSection.label} items">
-				{#each currentSection.items as item}
+				{#each visibleItems as item}
 					<CatalogSummaryCard {item} />
 				{/each}
 			</section>
+
+			{#if hasMoreItems}
+				<button
+					type="button"
+					class="load-more"
+					onclick={() => {
+						visibleItemCount += visibleItemIncrement;
+					}}
+				>
+					Load more
+				</button>
+			{/if}
 		{:else}
 			<div class="empty-state">
 				<h3>No items match that search.</h3>
@@ -562,6 +590,20 @@
 		grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
 		gap: 1rem;
 		align-items: stretch;
+	}
+
+	.load-more {
+		justify-self: center;
+		padding: 0.95rem 1.4rem;
+		border: 1px solid var(--border);
+		background: var(--surface-raised);
+		color: var(--text);
+		cursor: pointer;
+		text-transform: var(--site-text-transform);
+	}
+
+	.load-more:hover {
+		border-color: var(--border-strong);
 	}
 
 	.empty-state {
