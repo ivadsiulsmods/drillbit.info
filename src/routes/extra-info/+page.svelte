@@ -1,16 +1,18 @@
 <script lang="ts">
 	import ThemeToggle from "$lib/components/ThemeToggle.svelte";
-	import type { ExtraInfoPageData } from "$lib/types";
+	import type { ExtraInfoPageData, StatsForNerdsPageData } from "$lib/types";
+
+	type PageData = ExtraInfoPageData & StatsForNerdsPageData;
 
 	const joinGameUrl = "https://www.roblox.com/games/start?placeId=123076957357158";
-	let { data }: { data: ExtraInfoPageData } = $props();
+	let { data }: { data: PageData } = $props();
 </script>
 
 <svelte:head>
 	<title>extra info | tycoon simulator wiki</title>
 	<meta
 		name="description"
-		content="quick reference info for tycoon simulator plot size, conveyor sizes, odds, effects, and codes."
+		content="extra info, stats for nerds, and items that lie references for tycoon simulator."
 	/>
 </svelte:head>
 
@@ -69,6 +71,52 @@
 			</article>
 		{/each}
 	</section>
+
+	<section id="stats-for-nerds" class="section-header">
+		<div>
+			<p class="eyebrow">Reference</p>
+			<h2>Stats for Nerds</h2>
+		</div>
+	</section>
+
+	<section class="sheet-card" aria-label="stats for nerds">
+		<div class="sheet-scroll">
+			<table>
+				<tbody>
+					{#each data.statsRows as row}
+						<tr>
+							{#each row as cell}
+								<td class:empty-cell={cell === ""}>{cell}</td>
+							{/each}
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+	</section>
+
+	<section id="items-that-lie" class="section-header">
+		<div>
+			<p class="eyebrow">Reference</p>
+			<h2>Items That Lie</h2>
+		</div>
+	</section>
+
+	<section class="lie-grid" aria-label="items that lie">
+		{#each data.itemsThatLieSections as section}
+			<article class="lie-card">
+				<h3>{section.title}</h3>
+				<dl>
+					{#each section.rows as row}
+						<div>
+							<dt>{row.label}</dt>
+							<dd>{row.value}</dd>
+						</div>
+					{/each}
+				</dl>
+			</article>
+		{/each}
+	</section>
 </main>
 
 <style>
@@ -92,6 +140,9 @@
 	.top-button,
 	.hero-panel,
 	.info-card,
+	.sheet-card,
+	.section-header,
+	.lie-card,
 	.plot-card {
 		border: 1px solid var(--border);
 		background: var(--panel);
@@ -164,6 +215,13 @@
 		font-size: 1.4rem;
 	}
 
+	h3 {
+		margin: 0;
+		font-size: 1.4rem;
+		line-height: 1;
+		letter-spacing: -0.04em;
+	}
+
 	.description {
 		margin: 0;
 		max-width: 38rem;
@@ -200,6 +258,55 @@
 
 	.info-card {
 		display: grid;
+		gap: 1rem;
+		padding: 1.35rem;
+	}
+
+	.section-header {
+		padding: 1.5rem;
+	}
+
+	.sheet-card {
+		padding: 1rem;
+	}
+
+	.sheet-scroll {
+		overflow-x: auto;
+	}
+
+	table {
+		width: 100%;
+		min-width: 760px;
+		border-collapse: collapse;
+	}
+
+	td {
+		min-width: 7rem;
+		padding: 0.75rem 0.8rem;
+		border: 1px solid var(--line);
+		color: var(--text);
+		line-height: 1.45;
+		vertical-align: top;
+	}
+
+	tr:first-child td,
+	td:first-child:not(.empty-cell) {
+		color: #8fb0ff;
+	}
+
+	.empty-cell {
+		color: transparent;
+	}
+
+	.lie-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+		gap: 1rem;
+	}
+
+	.lie-card {
+		display: grid;
+		align-content: start;
 		gap: 1rem;
 		padding: 1.35rem;
 	}

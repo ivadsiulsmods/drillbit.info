@@ -46,7 +46,7 @@
 
 	const joinGameUrl = "https://www.roblox.com/games/start?placeId=123076957357158";
 	const lambdaDesmosUrl = "https://www.desmos.com/calculator/7gs3pmi3au";
-	const statsForNerdsUrl = "/stats-for-nerds";
+	const statsForNerdsUrl = "/extra-info#stats-for-nerds";
 	const luckOptions: LuckOption[] = [
 		{ key: "none", label: "no luck", boostPercent: 0 },
 		{ key: "luck-1", label: "luck i", boostPercent: 5 },
