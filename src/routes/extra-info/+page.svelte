@@ -3,9 +3,51 @@
 	import type { ExtraInfoPageData, StatsForNerdsPageData } from "$lib/types";
 
 	type PageData = ExtraInfoPageData & StatsForNerdsPageData;
+	type InfoSection = ExtraInfoPageData["infoSections"][number];
 
 	const joinGameUrl = "https://www.roblox.com/games/start?placeId=123076957357158";
 	let { data }: { data: PageData } = $props();
+
+	const statsSections = $derived.by<InfoSection[]>(() => {
+		const sections: InfoSection[] = [];
+		let currentSection: InfoSection = {
+			rows: [],
+			title: "stats for nerds"
+		};
+
+		for (const row of data.statsRows) {
+			const cells = row.map((cell) => cell.trim()).filter((cell) => cell !== "");
+
+			if (cells.length === 0) {
+				continue;
+			}
+
+			if (cells.length === 1 && currentSection.rows.length > 0) {
+				sections.push(currentSection);
+				currentSection = {
+					rows: [],
+					title: cells[0]
+				};
+				continue;
+			}
+
+			if (cells.length === 1) {
+				currentSection.title = cells[0];
+				continue;
+			}
+
+			currentSection.rows.push({
+				label: cells[0],
+				value: cells.slice(1).join(" ")
+			});
+		}
+
+		if (currentSection.rows.length > 0) {
+			sections.push(currentSection);
+		}
+
+		return sections;
+	});
 </script>
 
 <svelte:head>
@@ -79,20 +121,20 @@
 		</div>
 	</section>
 
-	<section class="sheet-card" aria-label="stats for nerds">
-		<div class="sheet-scroll">
-			<table>
-				<tbody>
-					{#each data.statsRows as row}
-						<tr>
-							{#each row as cell}
-								<td class:empty-cell={cell === ""}>{cell}</td>
-							{/each}
-						</tr>
+	<section class="info-grid" aria-label="stats for nerds">
+		{#each statsSections as section}
+			<article class="info-card">
+				<h3>{section.title}</h3>
+				<dl>
+					{#each section.rows as row}
+						<div>
+							<dt>{row.label}</dt>
+							<dd>{row.value}</dd>
+						</div>
 					{/each}
-				</tbody>
-			</table>
-		</div>
+				</dl>
+			</article>
+		{/each}
 	</section>
 
 	<section id="items-that-lie" class="section-header">
@@ -102,9 +144,9 @@
 		</div>
 	</section>
 
-	<section class="lie-grid" aria-label="items that lie">
+	<section class="info-grid" aria-label="items that lie">
 		{#each data.itemsThatLieSections as section}
-			<article class="lie-card">
+			<article class="info-card">
 				<h3>{section.title}</h3>
 				<dl>
 					{#each section.rows as row}
@@ -140,9 +182,7 @@
 	.top-button,
 	.hero-panel,
 	.info-card,
-	.sheet-card,
 	.section-header,
-	.lie-card,
 	.plot-card {
 		border: 1px solid var(--border);
 		background: var(--panel);
@@ -264,51 +304,6 @@
 
 	.section-header {
 		padding: 1.5rem;
-	}
-
-	.sheet-card {
-		padding: 1rem;
-	}
-
-	.sheet-scroll {
-		overflow-x: auto;
-	}
-
-	table {
-		width: 100%;
-		min-width: 760px;
-		border-collapse: collapse;
-	}
-
-	td {
-		min-width: 7rem;
-		padding: 0.75rem 0.8rem;
-		border: 1px solid var(--line);
-		color: var(--text);
-		line-height: 1.45;
-		vertical-align: top;
-	}
-
-	tr:first-child td,
-	td:first-child:not(.empty-cell) {
-		color: #8fb0ff;
-	}
-
-	.empty-cell {
-		color: transparent;
-	}
-
-	.lie-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-		gap: 1rem;
-	}
-
-	.lie-card {
-		display: grid;
-		align-content: start;
-		gap: 1rem;
-		padding: 1.35rem;
 	}
 
 	dl {
