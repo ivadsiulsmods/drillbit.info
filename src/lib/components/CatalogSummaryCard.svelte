@@ -1,6 +1,4 @@
 <script lang="ts">
-	import { onMount } from "svelte";
-	import { DEFAULT_BASE_LUCK, readStoredBaseLuck } from "$lib/client-settings";
 	import type { CatalogDetail, CatalogSummaryItem } from "$lib/types";
 
 	type QuickStat = {
@@ -13,28 +11,12 @@
 	};
 
 	let { item }: Props = $props();
-	let baseLuckMultiplier = $state(DEFAULT_BASE_LUCK);
 
-	onMount(() => {
-		const syncBaseLuckMultiplier = () => {
-			baseLuckMultiplier = readStoredBaseLuck();
-		};
+	const hasValue = (value: string): boolean => {
+		const trimmedValue = value.trim();
 
-		const handleStorage = (event: StorageEvent) => {
-			if (event.key === "tycoon-sim-wiki-base-luck" || event.key == null) {
-				syncBaseLuckMultiplier();
-			}
-		};
-
-		syncBaseLuckMultiplier();
-		window.addEventListener("storage", handleStorage);
-
-		return () => {
-			window.removeEventListener("storage", handleStorage);
-		};
-	});
-
-	const hasValue = (value: string): boolean => value.trim().toUpperCase() !== "N/A";
+		return trimmedValue !== "" && trimmedValue.toUpperCase() !== "N/A";
+	};
 	const formatDisplayText = (value: string): string =>
 		value.replace(/(^|[\s/-])([a-z])/g, (match, prefix: string, letter: string) => {
 			return `${prefix}${letter.toUpperCase()}`;
@@ -43,54 +25,11 @@
 		const detail = details.find((entry) => entry.label === label);
 		return detail?.value.trim() ?? "N/A";
 	};
-	const formatCompactNumber = (value: number): string => {
-		if (Number.isInteger(value) === true) {
-			return value.toString();
-		}
-
-		return value.toFixed(2).replace(/\.?0+$/, "");
-	};
-	const formatShortNumber = (value: number): string => {
-		if (value >= 1_000_000_000_000) {
-			return `${formatCompactNumber(value / 1_000_000_000_000)}t`;
-		}
-
-		if (value >= 1_000_000_000) {
-			return `${formatCompactNumber(value / 1_000_000_000)}b`;
-		}
-
-		if (value >= 1_000_000) {
-			return `${formatCompactNumber(value / 1_000_000)}m`;
-		}
-
-		if (value >= 1_000) {
-			return `${formatCompactNumber(value / 1_000)}k`;
-		}
-
-		return formatCompactNumber(value);
-	};
 	const stripWholeNumberDecimals = (value: string): string => {
 		return value.replace(/(\d[\d,]*)\.00\b/g, "$1");
 	};
 	const normalizeQuickStatValue = (value: string): string => {
 		return stripWholeNumberDecimals(value.trim());
-	};
-	const shortenOdds = (value: string): string => {
-		const normalized = normalizeQuickStatValue(value);
-		const compact = normalized.replace(/\s+/g, "");
-		const match = compact.match(/^1\/([0-9,.]+)$/);
-
-		if (match == null) {
-			return normalized;
-		}
-
-		const denominator = Number(match[1].replaceAll(",", ""));
-
-		if (Number.isNaN(denominator) === true) {
-			return normalized;
-		}
-
-		return `1/${formatShortNumber(Math.max(denominator / baseLuckMultiplier, 1))}`;
 	};
 	const formatMultiplierValue = (value: string): string => {
 		const normalized = normalizeQuickStatValue(value);
@@ -114,7 +53,7 @@
 		const details = item.defaultVariant.details;
 		const stats: QuickStat[] = [];
 		const typeValue = findDetailValue(details, "type").toLowerCase();
-		const amountValue = findDetailValue(details, "amount");
+		const amountValue = findDetailValue(details, "modifier");
 		const oddsValue = findDetailValue(details, "odds");
 		const sizeValue = findDetailValue(details, "size");
 
@@ -129,9 +68,9 @@
 		if (item.category === "upgraders") {
 			if (hasValue(amountValue)) {
 				stats.push({
-					label: typeValue === "addative" ? "Amount" : "Multiplier",
+					label: typeValue === "additive" ? "Amount" : "Multiplier",
 					value:
-						typeValue === "addative"
+						typeValue === "additive"
 							? normalizeQuickStatValue(amountValue)
 							: formatMultiplierValue(amountValue)
 				});
@@ -147,7 +86,7 @@
 		}
 
 		if (hasValue(oddsValue)) {
-			stats.push({ label: "Odds", value: shortenOdds(oddsValue) });
+			stats.push({ label: "Odds", value: normalizeQuickStatValue(oddsValue) });
 		}
 
 		if (hasValue(sizeValue)) {
@@ -177,8 +116,15 @@
 </script>
 
 <a class={`summary-card ${rarityClass}`} href={`/catalog/${item.category}/${item.slug}`}>
-	<p class="type">{formatDisplayText(item.categoryLabel)}</p>
-	<h3>{formatDisplayText(item.name)}</h3>
+	<div class="card-header">
+		{#if hasValue(item.defaultVariant.imageSrc)}
+			<img src={item.defaultVariant.imageSrc} alt="" loading="lazy" />
+		{/if}
+		<div>
+			<p class="type">{formatDisplayText(item.categoryLabel)}</p>
+			<h3>{formatDisplayText(item.name)}</h3>
+		</div>
+	</div>
 
 	{#if quickStats.length > 0}
 		<div class="quick-stats" aria-label="quick item stats">
@@ -225,6 +171,21 @@
 		font-size: 0.74rem;
 		letter-spacing: 0.08em;
 		color: var(--muted);
+	}
+
+	.card-header {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		align-items: center;
+		gap: 0.75rem;
+		min-height: 3.4rem;
+	}
+
+	img {
+		width: 3.4rem;
+		height: 3.4rem;
+		object-fit: contain;
+		image-rendering: auto;
 	}
 
 	h3 {

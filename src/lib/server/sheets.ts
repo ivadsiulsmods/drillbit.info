@@ -12,7 +12,8 @@ import type {
 	CategoryKey,
 	ExtraInfoPageData,
 	ExtraInfoRow,
-	ExtraInfoSection
+	ExtraInfoSection,
+	StatsForNerdsPageData
 } from "$lib/types";
 
 const SHEET_ID = "1iLCa9vykk5DKBN_JrUFIg2h34XU02hiBJp2Yzg_-5aU";
@@ -63,6 +64,7 @@ type RawCatalogItem = {
 		segments: CatalogDetailSegment[];
 		value: string;
 	}>;
+	imageSrc: string;
 	name: string;
 	obtainmentMethod: string;
 	rarity: string;
@@ -86,6 +88,11 @@ type ExtraInfoConfig = {
 
 type ExtraInfoCacheEntry = {
 	data: ExtraInfoPageData;
+	expiresAt: number;
+};
+
+type StatsForNerdsCacheEntry = {
+	data: StatsForNerdsPageData;
 	expiresAt: number;
 };
 
@@ -113,6 +120,8 @@ type GoogleVisualizationPayload = {
 	};
 };
 type ParsedSheetCell = {
+	columnIndex: number;
+	rowIndex: number;
 	segments: CatalogDetailSegment[];
 	value: string;
 };
@@ -124,6 +133,8 @@ let crateCache: CrateCacheEntry | null = null;
 let inFlightCrateLoad: Promise<CrateItem[]> | null = null;
 let extraInfoCache: ExtraInfoCacheEntry | null = null;
 let inFlightExtraInfoLoad: Promise<ExtraInfoPageData> | null = null;
+let statsForNerdsCache: StatsForNerdsCacheEntry | null = null;
+let inFlightStatsForNerdsLoad: Promise<StatsForNerdsPageData> | null = null;
 
 const variantPriority = ["N/A", "Shiny", "Mythic", "Shiny Mythic"];
 const ignoredSpreadsheetLines = new Set([
@@ -134,6 +145,19 @@ const ignoredSpreadsheetLines = new Set([
 const extraInfoConfig: ExtraInfoConfig = {
 	gid: "357911461"
 };
+const statsForNerdsGid = "201470788";
+const itemsThatLieGid = "1366342489";
+const hiddenDetailLabels = new Set([
+	"image",
+	"raw modifier",
+	"raw min value",
+	"raw max value",
+	"raw odds",
+	"raw ore value",
+	"shiny luck",
+	"mythic luck",
+	"unbox luck"
+]);
 
 const isNotAvailable = (value: string | null | undefined): boolean => {
 	return typeof value === "string" && value.trim() === "N/A";
@@ -214,6 +238,10 @@ const mergeSegments = (segments: CatalogDetailSegment[]): CatalogDetailSegment[]
 };
 
 const parseCellSegments = (cell: XLSX.CellObject | undefined): CatalogDetailSegment[] => {
+	if (cell == null || (cell.t === "z" && cell.v == null && cell.w == null)) {
+		return [{ text: "" }];
+	}
+
 	const value = toDisplayValue(cell?.w ?? (cell?.v?.toString() ?? undefined));
 	const href = cell?.l?.Target;
 
@@ -250,12 +278,19 @@ const parseCellSegments = (cell: XLSX.CellObject | undefined): CatalogDetailSegm
 	return mergedSegments;
 };
 
-const parseSheetCell = (cell: XLSX.CellObject | undefined): ParsedSheetCell => {
+const parseSheetCell = (
+	cell: XLSX.CellObject | undefined,
+	rowIndex = -1,
+	columnIndex = -1
+): ParsedSheetCell => {
 	const segments = parseCellSegments(cell);
+	const text = segments.map((segment) => segment.text).join("");
 
 	return {
+		columnIndex,
+		rowIndex,
 		segments,
-		value: toDisplayValue(segments.map((segment) => segment.text).join(""))
+		value: text.trim() === "" ? "" : toDisplayValue(text)
 	};
 };
 
@@ -617,6 +652,115 @@ const getCrateSection = (value: string): CategoryKey | null => {
 const createCrateSpreadsheetUrl = (sheetName: string): string =>
 	`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:html&sheet=${encodeURIComponent(sheetName)}`;
 
+const getXlsxFileContent = (file: unknown): Buffer | null => {
+	if (typeof file !== "object" || file == null || "content" in file === false) {
+		return null;
+	}
+
+	const content = (file as { content?: unknown }).content;
+
+	if (Buffer.isBuffer(content)) {
+		return content;
+	}
+
+	if (typeof content === "string") {
+		return Buffer.from(content);
+	}
+
+	return null;
+};
+
+const getXlsxFileText = (file: unknown): string => getXlsxFileContent(file)?.toString("utf8") ?? "";
+
+const getImageMimeType = (path: string): string => {
+	const extension = path.split(".").pop()?.toLowerCase();
+
+	if (extension === "jpg" || extension === "jpeg") {
+		return "image/jpeg";
+	}
+
+	if (extension === "gif") {
+		return "image/gif";
+	}
+
+	if (extension === "webp") {
+		return "image/webp";
+	}
+
+	return "image/png";
+};
+
+const normalizeXlsxPath = (basePath: string, target: string): string => {
+	const parts = basePath.split("/").slice(0, -1);
+
+	for (const part of target.split("/")) {
+		if (part === "..") {
+			parts.pop();
+			continue;
+		}
+
+		if (part !== "." && part !== "") {
+			parts.push(part);
+		}
+	}
+
+	return parts.join("/");
+};
+
+const extractWorkbookImageSrcByRow = (workbook: XLSX.WorkBook): Map<number, string> => {
+	const files = (workbook as XLSX.WorkBook & { files?: Record<string, unknown> }).files;
+
+	if (files == null) {
+		return new Map();
+	}
+
+	const drawingPath = Object.keys(files).find((path) => /^xl\/drawings\/drawing\d+\.xml$/i.test(path));
+
+	if (drawingPath == null) {
+		return new Map();
+	}
+
+	const drawingXml = getXlsxFileText(files[drawingPath]);
+	const relsXml = getXlsxFileText(files[drawingPath.replace("xl/drawings/", "xl/drawings/_rels/") + ".rels"]);
+	const relationshipById = new Map<string, string>();
+
+	for (const match of relsXml.matchAll(/<Relationship\b[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"/g)) {
+		relationshipById.set(match[1], normalizeXlsxPath(drawingPath, match[2]));
+	}
+
+	const imageSrcByRow = new Map<number, string>();
+
+	for (const match of drawingXml.matchAll(/<xdr:(oneCellAnchor|twoCellAnchor)>([\s\S]*?)<\/xdr:\1>/g)) {
+		const anchorXml = match[2];
+		const row = Number(anchorXml.match(/<xdr:row>(\d+)<\/xdr:row>/)?.[1]);
+		const column = Number(anchorXml.match(/<xdr:col>(\d+)<\/xdr:col>/)?.[1]);
+		const relationshipId = anchorXml.match(/r:embed="([^"]+)"/)?.[1];
+
+		if (Number.isNaN(row) || column !== 0 || relationshipId == null) {
+			continue;
+		}
+
+		const imagePath = relationshipById.get(relationshipId);
+
+		if (imagePath == null) {
+			continue;
+		}
+
+		const imageContent = getXlsxFileContent(files[imagePath]);
+
+		if (imageContent == null) {
+			continue;
+		}
+
+		imageSrcByRow.set(
+			row,
+			`data:${getImageMimeType(imagePath)};base64,${imageContent.toString("base64")}`
+		);
+	}
+
+	return imageSrcByRow;
+};
+
 const parseCrateSheet = (sheetName: string, rows: ParsedSheetCell[][]): CrateItem => {
 	const cost = parseCrateCost(rows);
 	const itemGroups: Record<CategoryKey, CrateListEntry[]> = {
@@ -664,6 +808,7 @@ const parseCrateSheet = (sheetName: string, rows: ParsedSheetCell[][]): CrateIte
 
 		itemGroups[currentSection].push({
 			category: currentSection,
+			imageSrc: "",
 			name: firstValue,
 			slug: slugify(firstValue)
 		});
@@ -736,7 +881,7 @@ const getSheetRows = (sheet: XLSX.WorkSheet): ParsedSheetCell[][] => {
 
 		for (let columnIndex = range.s.c; columnIndex <= range.e.c; columnIndex += 1) {
 			const address = XLSX.utils.encode_cell({ c: columnIndex, r: rowIndex });
-			row.push(parseSheetCell(sheet[address]));
+			row.push(parseSheetCell(sheet[address], rowIndex, columnIndex));
 		}
 
 		if (row.some((cell) => cell.value.trim() !== "")) {
@@ -749,6 +894,7 @@ const getSheetRows = (sheet: XLSX.WorkSheet): ParsedSheetCell[][] => {
 
 const normalizeVariant = (item: RawCatalogItem): CatalogVariant => ({
 	details: item.details,
+	imageSrc: item.imageSrc,
 	obtainmentMethod: item.obtainmentMethod,
 	rarity: item.rarity,
 	searchText: item.searchText,
@@ -801,12 +947,92 @@ const groupItems = (items: RawCatalogItem[]): CatalogSummaryItem[] => {
 		.sort((a, b) => a.name.localeCompare(b.name));
 };
 
+const titleCase = (value: string): string =>
+	value.toLowerCase().replace(/(^|[\s/-])([a-z])/g, (_match, prefix: string, letter: string) => {
+		return `${prefix}${letter.toUpperCase()}`;
+	});
+
+const getCrateNameFromObtainmentMethod = (value: string): string | null => {
+	const match = value.match(/\bobtained from\s+(?:the\s+)?(.+?\bcrate)\b/i);
+
+	if (match == null) {
+		return null;
+	}
+
+	return titleCase(compactWhitespace(match[1]));
+};
+
+const createSpreadsheetUrlForGid = (gid: string): string =>
+	`https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit?gid=${gid}#gid=${gid}`;
+
+const buildCratesFromSections = (sections: CatalogSection[]): CrateItem[] => {
+	const cratesByName = new Map<string, CrateItem>();
+	const seenItemsByCrate = new Map<string, Set<string>>();
+
+	for (const section of sections) {
+		for (const item of section.items) {
+			for (const variant of item.variants) {
+				const crateName = getCrateNameFromObtainmentMethod(variant.obtainmentMethod);
+
+				if (crateName == null) {
+					continue;
+				}
+
+				const normalizedCrateName = crateName.toLowerCase();
+				const crate =
+					cratesByName.get(normalizedCrateName) ??
+					({
+						cost: "N/A",
+						hasSecret: false,
+						itemCounts: {
+							droppers: 0,
+							upgraders: 0,
+							furnaces: 0
+						},
+						items: {
+							droppers: [],
+							upgraders: [],
+							furnaces: []
+						},
+						name: crateName,
+						slug: slugify(crateName),
+						spreadsheetUrl: createSpreadsheetUrlForGid(SECTION_CONFIG.find((entry) => entry.key === item.category)?.gid ?? "0")
+					} satisfies CrateItem);
+				const seenItems =
+					seenItemsByCrate.get(normalizedCrateName) ?? new Set<string>();
+				const itemKey = `${item.category}:${item.slug}`;
+
+				if (seenItems.has(itemKey) === false) {
+					crate.items[item.category].push({
+						category: item.category,
+						imageSrc: item.defaultVariant.imageSrc,
+						name: item.name,
+						slug: item.slug
+					});
+					crate.itemCounts[item.category] += 1;
+					seenItems.add(itemKey);
+				}
+
+				if (variant.rarity.toLowerCase() === "secret") {
+					crate.hasSecret = true;
+				}
+
+				cratesByName.set(normalizedCrateName, crate);
+				seenItemsByCrate.set(normalizedCrateName, seenItems);
+			}
+		}
+	}
+
+	return Array.from(cratesByName.values()).sort((left, right) => left.name.localeCompare(right.name));
+};
+
 const normalizeSection = (
 	key: CategoryKey,
 	label: string,
 	description: string,
 	type: string,
-	rows: ParsedSheetCell[][]
+	rows: ParsedSheetCell[][],
+	imageSrcByRow = new Map<number, string>()
 ): CatalogSection => {
 	const [headerRow = [], ...dataRows] = rows;
 	const columns = headerRow.map((column) => column.value.trim()).filter((column) => column !== "");
@@ -817,7 +1043,7 @@ const normalizeSection = (
 			const rowMap = Object.fromEntries(columns.map((column, index) => [column, cells[index]]));
 			const name = rowMap["Name"]?.value;
 
-			if (name == null || isNotAvailable(name)) {
+			if (name == null || name.trim() === "" || isNotAvailable(name)) {
 				return null;
 			}
 
@@ -825,7 +1051,15 @@ const normalizeSection = (
 			const rarity = rowMap["Rarity"]?.value ?? "N/A";
 			const obtainmentMethod = rowMap["Obtainment Method"]?.value ?? "N/A";
 			const details = columns
-				.filter((column) => column !== "Name" && column !== "Variant")
+				.filter((column) => {
+					const normalizedLabel = normalizeLabel(column);
+
+					return (
+						column !== "Name" &&
+						column !== "Variant" &&
+						hiddenDetailLabels.has(normalizedLabel) === false
+					);
+				})
 				.map((column) => {
 					const detailCell = getDetailCell(rowMap, column);
 
@@ -841,6 +1075,7 @@ const normalizeSection = (
 				categoryLabel: label,
 				categoryType: type,
 				details,
+				imageSrc: imageSrcByRow.get(row[0]?.rowIndex ?? -1) ?? "",
 				name,
 				obtainmentMethod,
 				rarity,
@@ -889,6 +1124,7 @@ const loadSectionWorkbook = async (
 	const payload = await response.arrayBuffer();
 
 	return XLSX.read(Buffer.from(payload), {
+		bookFiles: true,
 		cellFormula: false,
 		type: "buffer"
 	});
@@ -907,42 +1143,11 @@ const loadCrates = async (fetchFn: typeof fetch): Promise<CrateItem[]> => {
 
 	inFlightCrateLoad = (async () => {
 		try {
-			const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=xlsx`;
-			const requestFetch = globalThis.fetch ?? fetchFn;
-			const response = await requestFetch(url, {
-				headers: {
-					accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-				},
-				signal: AbortSignal.timeout(15_000)
-			});
-
-			if (response.ok === false) {
-				throw new Error(`Received ${response.status} from the spreadsheet export.`);
-			}
-
-			const contentType = response.headers.get("content-type") ?? "";
-
-			if (contentType.includes("spreadsheetml.sheet") === false) {
-				throw new Error(`The crate export returned "${contentType}" instead of a workbook.`);
-			}
-
-			const workbook = XLSX.read(Buffer.from(await response.arrayBuffer()), {
-				cellFormula: false,
-				type: "buffer"
-			});
-			const crates = workbook.SheetNames
-				.filter((sheetName) => /\bcrate$/i.test(sheetName.trim()))
-				.map((sheetName) =>
-					parseCrateSheet(sheetName.trim(), getSheetRows(workbook.Sheets[sheetName]))
-				)
-				.sort((left, right) => {
-					const priceDifference = getCratePrice(left.cost) - getCratePrice(right.cost);
-
-					return priceDifference === 0 ? left.name.localeCompare(right.name) : priceDifference;
-				});
+			const sections = await getCatalogSections(fetchFn);
+			const crates = buildCratesFromSections(sections);
 
 			if (crates.length === 0) {
-				throw new Error("No crate sheets were found in the spreadsheet export.");
+				throw new Error("No crate obtainment methods were found in the catalog sheets.");
 			}
 
 			crateCache = {
@@ -1007,6 +1212,119 @@ const loadExtraInfo = async (fetchFn: typeof fetch): Promise<ExtraInfoPageData> 
 	return inFlightExtraInfoLoad;
 };
 
+const loadWorkbookByGid = async (
+	fetchFn: typeof fetch,
+	gid: string,
+	label: string
+): Promise<XLSX.WorkBook> => {
+	const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=xlsx&gid=${gid}`;
+	const requestFetch = globalThis.fetch ?? fetchFn;
+	const response = await requestFetch(url, {
+		headers: {
+			accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+		},
+		signal: AbortSignal.timeout(15_000)
+	});
+
+	if (response.ok === false) {
+		throw new Error(`Received ${response.status} from the ${label} sheet export.`);
+	}
+
+	const contentType = response.headers.get("content-type") ?? "";
+
+	if (contentType.includes("spreadsheetml.sheet") === false) {
+		throw new Error(`The ${label} export returned "${contentType}" instead of a workbook.`);
+	}
+
+	return XLSX.read(Buffer.from(await response.arrayBuffer()), {
+		cellFormula: false,
+		type: "buffer"
+	});
+};
+
+const getSimpleSheetRows = (sheet: XLSX.WorkSheet): string[][] => {
+	return getSheetRows(sheet)
+		.map((row) => row.map((cell) => compactWhitespace(cell.value)))
+		.filter((row) => row.some((value) => value !== ""));
+};
+
+const parseItemsThatLieRows = (rows: string[][]): ExtraInfoSection[] => {
+	const sections: ExtraInfoSection[] = [];
+	let currentSection: ExtraInfoSection | null = null;
+
+	for (const row of rows) {
+		const cells = row.filter((cell) => cell !== "");
+		const firstCell = cells[0] ?? "";
+		const normalizedFirstCell = firstCell.toLowerCase();
+
+		if (
+			cells.length === 1 &&
+			(normalizedFirstCell === "droppers" ||
+				normalizedFirstCell === "upgraders" ||
+				normalizedFirstCell === "furnaces")
+		) {
+			currentSection = {
+				rows: [],
+				title: normalizedFirstCell
+			};
+			sections.push(currentSection);
+			continue;
+		}
+
+		if (currentSection == null || cells.length < 2) {
+			continue;
+		}
+
+		currentSection.rows.push({
+			label: firstCell,
+			value: cells.slice(1).join(" ")
+		});
+	}
+
+	return sections.filter((section) => section.rows.length > 0);
+};
+
+const loadStatsForNerds = async (fetchFn: typeof fetch): Promise<StatsForNerdsPageData> => {
+	const now = Date.now();
+
+	if (statsForNerdsCache != null && statsForNerdsCache.expiresAt > now) {
+		return statsForNerdsCache.data;
+	}
+
+	if (inFlightStatsForNerdsLoad != null) {
+		return inFlightStatsForNerdsLoad;
+	}
+
+	inFlightStatsForNerdsLoad = (async () => {
+		try {
+			const [statsWorkbook, lieWorkbook] = await Promise.all([
+				loadWorkbookByGid(fetchFn, statsForNerdsGid, "stats for nerds"),
+				loadWorkbookByGid(fetchFn, itemsThatLieGid, "items that lie")
+			]);
+			const statsSheet = statsWorkbook.Sheets[statsWorkbook.SheetNames[0]];
+			const lieSheet = lieWorkbook.Sheets[lieWorkbook.SheetNames[0]];
+			const data: StatsForNerdsPageData = {
+				itemsThatLieSections: parseItemsThatLieRows(getSimpleSheetRows(lieSheet)),
+				statsRows: getSimpleSheetRows(statsSheet)
+			};
+
+			statsForNerdsCache = {
+				data,
+				expiresAt: Date.now() + SECTION_CACHE_TTL_MS
+			};
+
+			return data;
+		} catch (cause) {
+			console.error("Failed to load stats for nerds data from Google Sheets.", cause);
+			throw error(503, "stats for nerds is temporarily unavailable");
+		} finally {
+			inFlightStatsForNerdsLoad = null;
+		}
+	})();
+
+	return inFlightStatsForNerdsLoad;
+};
+
 const getSectionConfig = (category: string): SectionConfig => {
 	const section = SECTION_CONFIG.find((entry) => entry.key === category);
 
@@ -1059,7 +1377,8 @@ const loadSection = async (
 				section.label,
 				section.description,
 				section.type,
-				getSheetRows(sheet)
+				getSheetRows(sheet),
+				extractWorkbookImageSrcByRow(workbook)
 			);
 
 			sectionCache.set(section.key, {
@@ -1131,4 +1450,10 @@ export const getCrateBySlug = async (fetchFn: typeof fetch, slug: string): Promi
 
 export const getExtraInfo = async (fetchFn: typeof fetch): Promise<ExtraInfoPageData> => {
 	return loadExtraInfo(fetchFn);
+};
+
+export const getStatsForNerds = async (
+	fetchFn: typeof fetch
+): Promise<StatsForNerdsPageData> => {
+	return loadStatsForNerds(fetchFn);
 };

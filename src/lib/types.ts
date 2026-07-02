@@ -13,6 +13,7 @@ export type CatalogDetail = {
 
 export type CatalogVariant = {
 	details: CatalogDetail[];
+	imageSrc: string;
 	obtainmentMethod: string;
 	rarity: string;
 	searchText: string;
@@ -40,6 +41,7 @@ export type CatalogSection = {
 
 export type CrateListEntry = {
 	category: CategoryKey;
+	imageSrc: string;
 	name: string;
 	slug: string;
 };
@@ -70,4 +72,9 @@ export type ExtraInfoSection = {
 export type ExtraInfoPageData = {
 	infoSections: ExtraInfoSection[];
 	maxPlotSize: string;
+};
+
+export type StatsForNerdsPageData = {
+	itemsThatLieSections: ExtraInfoSection[];
+	statsRows: string[][];
 };

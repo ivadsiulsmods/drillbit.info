@@ -46,6 +46,7 @@
 
 	const joinGameUrl = "https://www.roblox.com/games/start?placeId=123076957357158";
 	const lambdaDesmosUrl = "https://www.desmos.com/calculator/7gs3pmi3au";
+	const statsForNerdsUrl = "/stats-for-nerds";
 	const luckOptions: LuckOption[] = [
 		{ key: "none", label: "no luck", boostPercent: 0 },
 		{ key: "luck-1", label: "luck i", boostPercent: 5 },
@@ -104,7 +105,11 @@
 		"gi"
 	));
 
-	const hasValue = (value: string): boolean => value.trim().toUpperCase() !== "N/A";
+	const hasValue = (value: string): boolean => {
+		const trimmedValue = value.trim();
+
+		return trimmedValue !== "" && trimmedValue.toUpperCase() !== "N/A";
+	};
 
 	let activeVariant = $state("N/A");
 	let openLuckMenu = $state<LuckControlKey | null>(null);
@@ -220,14 +225,20 @@
 		return selectedOption.label;
 	};
 	const visibleLuckControls = $derived.by<LuckControlKey[]>(() => {
-		const controls: LuckControlKey[] = ["luck"];
+		const controls: LuckControlKey[] = [];
 		const normalizedVariant = selectedVariant.variant.toLowerCase();
+		const hasShinyLuck = normalizedVariant.includes("shiny");
+		const hasMythicLuck = normalizedVariant.includes("mythic");
 
-		if (normalizedVariant.includes("shiny")) {
+		if (hasShinyLuck === false && hasMythicLuck === false) {
+			controls.push("luck");
+		}
+
+		if (hasShinyLuck) {
 			controls.push("shiny");
 		}
 
-		if (normalizedVariant.includes("mythic")) {
+		if (hasMythicLuck) {
 			controls.push("mythic");
 		}
 
@@ -366,6 +377,37 @@
 
 		return segments.length > 0 ? segments : [{ text: value }];
 	};
+
+	const shouldLinkStatsForNerds = (label: string): boolean => {
+		const normalizedLabel = label.toLowerCase();
+
+		return normalizedLabel === "extra effect" || normalizedLabel === "extra effects";
+	};
+
+	const linkifyStatsForNerdsText = (value: string): LinkedTextSegment[] => {
+		const segments: LinkedTextSegment[] = [];
+		let cursor = 0;
+
+		for (const match of value.matchAll(/stats for nerds/gi)) {
+			const startIndex = match.index ?? 0;
+
+			if (startIndex > cursor) {
+				segments.push({ text: value.slice(cursor, startIndex) });
+			}
+
+			segments.push({
+				href: statsForNerdsUrl,
+				text: match[0]
+			});
+			cursor = startIndex + match[0].length;
+		}
+
+		if (cursor < value.length) {
+			segments.push({ text: value.slice(cursor) });
+		}
+
+		return segments.length > 0 ? segments : [{ text: value }];
+	};
 </script>
 
 <svelte:head>
@@ -411,9 +453,14 @@
 
 	<section class={`detail-card ${rarityClass} ${glowClass}`}>
 		<div class="detail-header">
-			<div>
-				<p class="section-label">{data.item.categoryLabel}</p>
-				<h2>{data.item.name}</h2>
+			<div class="title-row">
+				{#if hasValue(selectedVariant.imageSrc)}
+					<img src={selectedVariant.imageSrc} alt="" />
+				{/if}
+				<div>
+					<p class="section-label">{data.item.categoryLabel}</p>
+					<h2>{data.item.name}</h2>
+				</div>
 			</div>
 			<span class="variant-pill">{displayVariantName(selectedVariant)}</span>
 		</div>
@@ -484,55 +531,20 @@
 										{/each}
 									</div>
 								</div>
-							{:else if detail.label === "odds"}
-								<div class="odds-display-line">
-									<span class="odds-value-text">{getDisplayedOddsValue(detail.value)}</span>
-									<div class="luck-controls">
-										{#each visibleLuckControls as controlKey}
-											<div class="luck-control">
-												<button
-													type="button"
-													class="luck-button"
-													class:active={openLuckMenu === controlKey}
-													aria-expanded={openLuckMenu === controlKey}
-													onclick={() => {
-														openLuckMenu = openLuckMenu === controlKey ? null : controlKey;
-													}}
-												>
-													<strong>{getLuckControlLabel(controlKey)}</strong>
-												</button>
-
-												{#if openLuckMenu === controlKey}
-													<div class="luck-dropdown">
-														{#each luckOptions as option}
-															<button
-																type="button"
-																class:selected-luck-option={getLuckSelectionKey(controlKey) === option.key}
-																onclick={() => {
-																	setLuckSelectionKey(controlKey, option.key);
-																	openLuckMenu = null;
-																}}
-															>
-																<span>{option.label}</span>
-																<small>
-																	{option.boostPercent === 0
-																		? "no boost"
-																		: `+${option.boostPercent}% luck`}
-																</small>
-															</button>
-														{/each}
-													</div>
-												{/if}
-											</div>
-										{/each}
-									</div>
-								</div>
 							{:else}
 								{#each detail.segments as segment}
 									{#if segment.href != null}
 										<a class="detail-link" href={segment.href} target="_blank" rel="noreferrer">
 											{segment.text}
 										</a>
+									{:else if shouldLinkStatsForNerds(detail.label)}
+										{#each linkifyStatsForNerdsText(segment.text) as linkedSegment}
+											{#if linkedSegment.href != null}
+												<a class="detail-link" href={linkedSegment.href}>{linkedSegment.text}</a>
+											{:else}
+												{linkedSegment.text}
+											{/if}
+										{/each}
 									{:else}
 										{segment.text}
 									{/if}
@@ -669,6 +681,19 @@
 		gap: 1rem;
 	}
 
+	.title-row {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		align-items: center;
+		gap: 0.9rem;
+	}
+
+	.title-row img {
+		width: 4.4rem;
+		height: 4.4rem;
+		object-fit: contain;
+	}
+
 	.variant-pill {
 		padding: 0.4rem 0.8rem;
 		border: 1px solid var(--border-strong);
@@ -757,12 +782,6 @@
 		color: #a9c0ff;
 	}
 
-	.luck-button strong {
-		font-size: 0.72rem;
-		font-weight: 400;
-		color: #ffffff;
-	}
-
 	.luck-dropdown {
 		position: absolute;
 		bottom: calc(100% + 0.35rem);
@@ -779,25 +798,6 @@
 		box-shadow:
 			inset 0 1px 0 0 var(--border),
 			var(--shadow);
-	}
-
-	.luck-dropdown button {
-		display: grid;
-		gap: 0.15rem;
-		padding: 0.6rem 0.65rem;
-		border: 1px solid var(--line);
-		background: var(--panel);
-		color: var(--text);
-		text-align: left;
-		text-transform: var(--site-text-transform);
-	}
-
-	.luck-dropdown button small {
-		color: #8fb0ff;
-	}
-
-	.luck-dropdown button.selected-luck-option {
-		border-color: #5c87ff;
 	}
 
 	.lambda-extra-effect {

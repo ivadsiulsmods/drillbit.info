@@ -124,7 +124,12 @@
 						<ul>
 							{#each section.items as item}
 								<li>
-									<a href={`/catalog/${item.category}/${item.slug}`}>{item.name}</a>
+									<a href={`/catalog/${item.category}/${item.slug}`}>
+										{#if item.imageSrc !== ""}
+											<img src={item.imageSrc} alt="" loading="lazy" />
+										{/if}
+										<span>{item.name}</span>
+									</a>
 								</li>
 							{/each}
 						</ul>
@@ -240,6 +245,19 @@
 	.crate-section a {
 		color: #8fb0ff;
 		text-decoration: underline;
+	}
+
+	.crate-section a {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		align-items: center;
+		gap: 0.65rem;
+	}
+
+	.crate-section img {
+		width: 2.6rem;
+		height: 2.6rem;
+		object-fit: contain;
 	}
 
 	.detail-card {
