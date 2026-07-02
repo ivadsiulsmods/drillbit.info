@@ -126,7 +126,7 @@
 								<li>
 									<a href={`/catalog/${item.category}/${item.slug}`}>
 										{#if item.imageSrc !== ""}
-											<img src={item.imageSrc} alt="" loading="lazy" />
+											<img src={item.imageSrc} alt="" loading="lazy" decoding="async" />
 										{/if}
 										<span>{item.name}</span>
 									</a>

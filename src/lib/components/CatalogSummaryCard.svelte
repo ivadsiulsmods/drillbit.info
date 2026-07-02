@@ -118,7 +118,7 @@
 <a class={`summary-card ${rarityClass}`} href={`/catalog/${item.category}/${item.slug}`}>
 	<div class="card-header">
 		{#if hasValue(item.defaultVariant.imageSrc)}
-			<img src={item.defaultVariant.imageSrc} alt="" loading="lazy" />
+			<img src={item.defaultVariant.imageSrc} alt="" loading="lazy" decoding="async" />
 		{/if}
 		<div>
 			<p class="type">{formatDisplayText(item.categoryLabel)}</p>

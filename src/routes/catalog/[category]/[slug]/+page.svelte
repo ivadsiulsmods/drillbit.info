@@ -455,7 +455,7 @@
 		<div class="detail-header">
 			<div class="title-row">
 				{#if hasValue(selectedVariant.imageSrc)}
-					<img src={selectedVariant.imageSrc} alt="" />
+					<img src={selectedVariant.imageSrc} alt="" loading="lazy" decoding="async" />
 				{/if}
 				<div>
 					<p class="section-label">{data.item.categoryLabel}</p>

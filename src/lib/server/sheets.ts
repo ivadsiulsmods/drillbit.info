@@ -17,7 +17,10 @@ import type {
 } from "$lib/types";
 
 const SHEET_ID = "1iLCa9vykk5DKBN_JrUFIg2h34XU02hiBJp2Yzg_-5aU";
-const SECTION_CACHE_TTL_MS = 10 * 60 * 1000;
+const SECTION_CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+export const CATALOG_CACHE_CONTROL = "public, max-age=0, s-maxage=86400, stale-while-revalidate=172800";
+export const CATALOG_IMAGE_CACHE_CONTROL =
+	"public, max-age=604800, s-maxage=259200, stale-while-revalidate=604800";
 
 const SECTION_CONFIG: Array<{
 	description: string;
@@ -77,6 +80,16 @@ type SectionCacheEntry = {
 	section: CatalogSection;
 };
 
+type WorkbookImage = {
+	content: Buffer;
+	contentType: string;
+};
+
+type ImageCacheEntry = {
+	expiresAt: number;
+	image: WorkbookImage;
+};
+
 type CrateCacheEntry = {
 	crates: CrateItem[];
 	expiresAt: number;
@@ -127,6 +140,7 @@ type ParsedSheetCell = {
 };
 
 const sectionCache = new Map<CategoryKey, SectionCacheEntry>();
+const imageCache = new Map<string, ImageCacheEntry>();
 const inFlightSectionLoads = new Map<CategoryKey, Promise<CatalogSection>>();
 const fallbackSections = catalogSnapshot as CatalogSection[];
 let crateCache: CrateCacheEntry | null = null;
@@ -203,6 +217,15 @@ const slugify = (value: string): string =>
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-+|-+$/g, "");
+
+const createCatalogImageKey = (category: CategoryKey, slug: string, variant: string): string =>
+	`${category}:${slug}:${variant.toLowerCase()}`;
+
+const createCatalogImageSrc = (category: CategoryKey, slug: string, variant: string): string => {
+	const searchParams = new URLSearchParams({ variant });
+
+	return `/api/catalog-image/${category}/${slug}?${searchParams.toString()}`;
+};
 
 const decodeXmlEntities = (value: string): string =>
 	value
@@ -707,7 +730,7 @@ const normalizeXlsxPath = (basePath: string, target: string): string => {
 	return parts.join("/");
 };
 
-const extractWorkbookImageSrcByRow = (workbook: XLSX.WorkBook): Map<number, string> => {
+const extractWorkbookImagesByRow = (workbook: XLSX.WorkBook): Map<number, WorkbookImage> => {
 	const files = (workbook as XLSX.WorkBook & { files?: Record<string, unknown> }).files;
 
 	if (files == null) {
@@ -728,7 +751,7 @@ const extractWorkbookImageSrcByRow = (workbook: XLSX.WorkBook): Map<number, stri
 		relationshipById.set(match[1], normalizeXlsxPath(drawingPath, match[2]));
 	}
 
-	const imageSrcByRow = new Map<number, string>();
+	const imageByRow = new Map<number, WorkbookImage>();
 
 	for (const match of drawingXml.matchAll(/<xdr:(oneCellAnchor|twoCellAnchor)>([\s\S]*?)<\/xdr:\1>/g)) {
 		const anchorXml = match[2];
@@ -752,13 +775,13 @@ const extractWorkbookImageSrcByRow = (workbook: XLSX.WorkBook): Map<number, stri
 			continue;
 		}
 
-		imageSrcByRow.set(
-			row,
-			`data:${getImageMimeType(imagePath)};base64,${imageContent.toString("base64")}`
-		);
+		imageByRow.set(row, {
+			content: imageContent,
+			contentType: getImageMimeType(imagePath)
+		});
 	}
 
-	return imageSrcByRow;
+	return imageByRow;
 };
 
 const parseCrateSheet = (sheetName: string, rows: ParsedSheetCell[][]): CrateItem => {
@@ -1032,7 +1055,7 @@ const normalizeSection = (
 	description: string,
 	type: string,
 	rows: ParsedSheetCell[][],
-	imageSrcByRow = new Map<number, string>()
+	imageByRow = new Map<number, WorkbookImage>()
 ): CatalogSection => {
 	const [headerRow = [], ...dataRows] = rows;
 	const columns = headerRow.map((column) => column.value.trim()).filter((column) => column !== "");
@@ -1050,6 +1073,16 @@ const normalizeSection = (
 			const variant = rowMap["Variant"]?.value ?? "N/A";
 			const rarity = rowMap["Rarity"]?.value ?? "N/A";
 			const obtainmentMethod = rowMap["Obtainment Method"]?.value ?? "N/A";
+			const slug = slugify(name);
+			const image = imageByRow.get(row[0]?.rowIndex ?? -1);
+
+			if (image != null) {
+				imageCache.set(createCatalogImageKey(key, slug, variant), {
+					expiresAt: Date.now() + SECTION_CACHE_TTL_MS,
+					image
+				});
+			}
+
 			const details = columns
 				.filter((column) => {
 					const normalizedLabel = normalizeLabel(column);
@@ -1075,7 +1108,7 @@ const normalizeSection = (
 				categoryLabel: label,
 				categoryType: type,
 				details,
-				imageSrc: imageSrcByRow.get(row[0]?.rowIndex ?? -1) ?? "",
+				imageSrc: image == null ? "" : createCatalogImageSrc(key, slug, variant),
 				name,
 				obtainmentMethod,
 				rarity,
@@ -1342,7 +1375,49 @@ const getFallbackSection = (category: CategoryKey): CatalogSection => {
 		throw error(503, "catalog data is temporarily unavailable");
 	}
 
-	return fallbackSection;
+	return {
+		...fallbackSection,
+		items: fallbackSection.items.map((item) => ({
+			...item,
+			defaultVariant: {
+				...item.defaultVariant,
+				imageSrc:
+					item.defaultVariant.imageSrc.trim() === ""
+						? ""
+						: createCatalogImageSrc(category, item.slug, item.defaultVariant.variant)
+			},
+			variants: item.variants.map((variant) => {
+				const fallbackImage = parseDataImageSrc(variant.imageSrc);
+
+				if (fallbackImage == null) {
+					return variant;
+				}
+
+				imageCache.set(createCatalogImageKey(category, item.slug, variant.variant), {
+					expiresAt: Date.now() + SECTION_CACHE_TTL_MS,
+					image: fallbackImage
+				});
+
+				return {
+					...variant,
+					imageSrc: createCatalogImageSrc(category, item.slug, variant.variant)
+				};
+			})
+		}))
+	};
+};
+
+const parseDataImageSrc = (imageSrc: string): WorkbookImage | null => {
+	const match = imageSrc.match(/^data:([^;]+);base64,(.+)$/);
+
+	if (match == null) {
+		return null;
+	}
+
+	return {
+		content: Buffer.from(match[2], "base64"),
+		contentType: match[1]
+	};
 };
 
 const loadSection = async (
@@ -1378,7 +1453,7 @@ const loadSection = async (
 				section.description,
 				section.type,
 				getSheetRows(sheet),
-				extractWorkbookImageSrcByRow(workbook)
+				extractWorkbookImagesByRow(workbook)
 			);
 
 			sectionCache.set(section.key, {
@@ -1429,6 +1504,55 @@ export const getCatalogItemByParams = async (
 	}
 
 	return item;
+};
+
+export const getCatalogImageByParams = async (
+	fetchFn: typeof fetch,
+	category: string,
+	slug: string,
+	variant: string
+): Promise<WorkbookImage> => {
+	const sectionConfig = getSectionConfig(category);
+	const normalizedVariant = variant.trim() === "" ? "N/A" : variant;
+	const imageKey = createCatalogImageKey(sectionConfig.key, slug, normalizedVariant);
+	const cachedImage = imageCache.get(imageKey);
+	const now = Date.now();
+
+	if (cachedImage != null && cachedImage.expiresAt > now) {
+		return cachedImage.image;
+	}
+
+	let section = await loadSection(fetchFn, sectionConfig);
+	let image = imageCache.get(imageKey);
+
+	if (image != null && image.expiresAt > now) {
+		return image.image;
+	}
+
+	sectionCache.delete(sectionConfig.key);
+	section = await loadSection(fetchFn, sectionConfig);
+	image = imageCache.get(imageKey);
+
+	if (image != null && image.expiresAt > now) {
+		return image.image;
+	}
+
+	const item = section.items.find((entry) => entry.slug === slug);
+	const imageSrc =
+		item?.variants.find((entry) => entry.variant === normalizedVariant)?.imageSrc ??
+		item?.defaultVariant.imageSrc;
+	const fallbackImage = imageSrc == null ? null : parseDataImageSrc(imageSrc);
+
+	if (fallbackImage == null) {
+		throw error(404, "image not found");
+	}
+
+	imageCache.set(imageKey, {
+		expiresAt: Date.now() + SECTION_CACHE_TTL_MS,
+		image: fallbackImage
+	});
+
+	return fallbackImage;
 };
 
 export const getCrates = async (fetchFn: typeof fetch): Promise<CrateSummaryItem[]> => {
