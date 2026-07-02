@@ -1,15 +1,19 @@
-import { getExtraInfo, getStatsForNerds } from "$lib/server/sheets";
+import {
+	getExtraInfo,
+	getItemsThatLie,
+	STATS_FOR_NERDS_SPREADSHEET_URL
+} from "$lib/server/sheets";
 
 export const load = async ({ fetch }) => {
-	const [extraInfo, statsForNerds] = await Promise.all([
+	const [extraInfo, itemsThatLieSections] = await Promise.all([
 		getExtraInfo(fetch),
-		getStatsForNerds(fetch)
+		getItemsThatLie(fetch)
 	]);
 
 	return {
 		infoSections: extraInfo.infoSections,
-		itemsThatLieSections: statsForNerds.itemsThatLieSections,
+		itemsThatLieSections,
 		maxPlotSize: extraInfo.maxPlotSize,
-		statsRows: statsForNerds.statsRows
+		statsForNerdsSpreadsheetUrl: STATS_FOR_NERDS_SPREADSHEET_URL
 	};
 };

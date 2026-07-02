@@ -109,6 +109,11 @@ type StatsForNerdsCacheEntry = {
 	expiresAt: number;
 };
 
+type ItemsThatLieCacheEntry = {
+	expiresAt: number;
+	sections: ExtraInfoSection[];
+};
+
 type ExtraInfoSheetRow = {
 	cells: string[];
 	text: string;
@@ -148,7 +153,9 @@ let inFlightCrateLoad: Promise<CrateItem[]> | null = null;
 let extraInfoCache: ExtraInfoCacheEntry | null = null;
 let inFlightExtraInfoLoad: Promise<ExtraInfoPageData> | null = null;
 let statsForNerdsCache: StatsForNerdsCacheEntry | null = null;
+let itemsThatLieCache: ItemsThatLieCacheEntry | null = null;
 let inFlightStatsForNerdsLoad: Promise<StatsForNerdsPageData> | null = null;
+let inFlightItemsThatLieLoad: Promise<ExtraInfoSection[]> | null = null;
 
 const variantPriority = ["N/A", "Shiny", "Mythic", "Shiny Mythic"];
 const ignoredSpreadsheetLines = new Set([
@@ -988,6 +995,8 @@ const getCrateNameFromObtainmentMethod = (value: string): string | null => {
 const createSpreadsheetUrlForGid = (gid: string): string =>
 	`https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit?gid=${gid}#gid=${gid}`;
 
+export const STATS_FOR_NERDS_SPREADSHEET_URL = createSpreadsheetUrlForGid(statsForNerdsGid);
+
 const buildCratesFromSections = (sections: CatalogSection[]): CrateItem[] => {
 	const cratesByName = new Map<string, CrateItem>();
 	const seenItemsByCrate = new Map<string, Set<string>>();
@@ -1317,6 +1326,40 @@ const parseItemsThatLieRows = (rows: string[][]): ExtraInfoSection[] => {
 	return sections.filter((section) => section.rows.length > 0);
 };
 
+const loadItemsThatLie = async (fetchFn: typeof fetch): Promise<ExtraInfoSection[]> => {
+	const now = Date.now();
+
+	if (itemsThatLieCache != null && itemsThatLieCache.expiresAt > now) {
+		return itemsThatLieCache.sections;
+	}
+
+	if (inFlightItemsThatLieLoad != null) {
+		return inFlightItemsThatLieLoad;
+	}
+
+	inFlightItemsThatLieLoad = (async () => {
+		try {
+			const workbook = await loadWorkbookByGid(fetchFn, itemsThatLieGid, "items that lie");
+			const sheet = workbook.Sheets[workbook.SheetNames[0]];
+			const sections = parseItemsThatLieRows(getSimpleSheetRows(sheet));
+
+			itemsThatLieCache = {
+				expiresAt: Date.now() + SECTION_CACHE_TTL_MS,
+				sections
+			};
+
+			return sections;
+		} catch (cause) {
+			console.error("Failed to load items that lie data from Google Sheets.", cause);
+			throw error(503, "items that lie is temporarily unavailable");
+		} finally {
+			inFlightItemsThatLieLoad = null;
+		}
+	})();
+
+	return inFlightItemsThatLieLoad;
+};
+
 const loadStatsForNerds = async (fetchFn: typeof fetch): Promise<StatsForNerdsPageData> => {
 	const now = Date.now();
 
@@ -1574,6 +1617,10 @@ export const getCrateBySlug = async (fetchFn: typeof fetch, slug: string): Promi
 
 export const getExtraInfo = async (fetchFn: typeof fetch): Promise<ExtraInfoPageData> => {
 	return loadExtraInfo(fetchFn);
+};
+
+export const getItemsThatLie = async (fetchFn: typeof fetch): Promise<ExtraInfoSection[]> => {
+	return loadItemsThatLie(fetchFn);
 };
 
 export const getStatsForNerds = async (

@@ -1,53 +1,14 @@
 <script lang="ts">
 	import ThemeToggle from "$lib/components/ThemeToggle.svelte";
-	import type { ExtraInfoPageData, StatsForNerdsPageData } from "$lib/types";
+	import type { ExtraInfoPageData } from "$lib/types";
 
-	type PageData = ExtraInfoPageData & StatsForNerdsPageData;
-	type InfoSection = ExtraInfoPageData["infoSections"][number];
+	type PageData = ExtraInfoPageData & {
+		itemsThatLieSections: ExtraInfoPageData["infoSections"];
+		statsForNerdsSpreadsheetUrl: string;
+	};
 
 	const joinGameUrl = "https://www.roblox.com/games/start?placeId=123076957357158";
 	let { data }: { data: PageData } = $props();
-
-	const statsSections = $derived.by<InfoSection[]>(() => {
-		const sections: InfoSection[] = [];
-		let currentSection: InfoSection = {
-			rows: [],
-			title: "stats for nerds"
-		};
-
-		for (const row of data.statsRows) {
-			const cells = row.map((cell) => cell.trim()).filter((cell) => cell !== "");
-
-			if (cells.length === 0) {
-				continue;
-			}
-
-			if (cells.length === 1 && currentSection.rows.length > 0) {
-				sections.push(currentSection);
-				currentSection = {
-					rows: [],
-					title: cells[0]
-				};
-				continue;
-			}
-
-			if (cells.length === 1) {
-				currentSection.title = cells[0];
-				continue;
-			}
-
-			currentSection.rows.push({
-				label: cells[0],
-				value: cells.slice(1).join(" ")
-			});
-		}
-
-		if (currentSection.rows.length > 0) {
-			sections.push(currentSection);
-		}
-
-		return sections;
-	});
 </script>
 
 <svelte:head>
@@ -114,28 +75,16 @@
 		{/each}
 	</section>
 
-	<section id="stats-for-nerds" class="section-header">
-		<div>
-			<p class="eyebrow">Reference</p>
-			<h2>Stats for Nerds</h2>
-		</div>
-	</section>
-
-	<section class="info-grid" aria-label="stats for nerds">
-		{#each statsSections as section}
-			<article class="info-card">
-				<h3>{section.title}</h3>
-				<dl>
-					{#each section.rows as row}
-						<div>
-							<dt>{row.label}</dt>
-							<dd>{row.value}</dd>
-						</div>
-					{/each}
-				</dl>
-			</article>
-		{/each}
-	</section>
+	<a
+		id="stats-for-nerds"
+		class="spreadsheet-link-card"
+		href={data.statsForNerdsSpreadsheetUrl}
+		target="_blank"
+		rel="noreferrer"
+	>
+		<span>Spreadsheet</span>
+		<strong>Stats for Nerds</strong>
+	</a>
 
 	<section id="items-that-lie" class="section-header">
 		<div>
@@ -183,6 +132,7 @@
 	.hero-panel,
 	.info-card,
 	.section-header,
+	.spreadsheet-link-card,
 	.plot-card {
 		border: 1px solid var(--border);
 		background: var(--panel);
@@ -304,6 +254,30 @@
 
 	.section-header {
 		padding: 1.5rem;
+	}
+
+	.spreadsheet-link-card {
+		display: grid;
+		gap: 0.45rem;
+		padding: 1.35rem;
+		color: var(--text);
+		background: var(--surface-raised);
+	}
+
+	.spreadsheet-link-card:hover {
+		border-color: var(--border-strong);
+	}
+
+	.spreadsheet-link-card span {
+		font-size: 0.78rem;
+		letter-spacing: 0.14em;
+		color: #8fb0ff;
+	}
+
+	.spreadsheet-link-card strong {
+		font-size: 1.4rem;
+		line-height: 1;
+		letter-spacing: -0.04em;
 	}
 
 	dl {
