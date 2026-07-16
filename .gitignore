@@ -1,5 +1,4 @@
 node_modules
-pnpm-lock.yaml
 dev-server.log
 .pnpm-store
 
@@ -24,4 +23,3 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
-dev-server.log

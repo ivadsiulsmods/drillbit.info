@@ -1,5 +1,5 @@
 {
-	"name": "db-index",
+	"name": "tycoon-sim-wiki",
 	"private": true,
 	"version": "0.0.1",
 	"packageManager": "pnpm@11.8.0",
@@ -8,12 +8,12 @@
 		"dev": "vite dev",
 		"build": "vite build",
 		"preview": "vite preview",
-		"prepare": "svelte-kit sync || echo ''",
+		"prepare": "svelte-kit sync",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
 	},
 	"devDependencies": {
-		"@sveltejs/adapter-vercel": "^5.10.2",
+		"@sveltejs/adapter-auto": "^7.0.0",
 		"@sveltejs/kit": "^2.57.0",
 		"@sveltejs/vite-plugin-svelte": "^7.0.0",
 		"@types/node": "^25.9.1",
@@ -21,10 +21,5 @@
 		"svelte-check": "^4.4.6",
 		"typescript": "^6.0.2",
 		"vite": "^8.0.7"
-	},
-	"dependencies": {
-		"@lucide/svelte": "^1.17.0",
-		"katex": "^0.17.0",
-		"xlsx": "^0.18.5"
 	}
 }
